@@ -16,7 +16,6 @@ import argparse
 import json
 import sys
 from typing import Any, Dict, Tuple
-from urllib.parse import urljoin
 
 import base58
 import jwt
@@ -35,7 +34,7 @@ truststore.inject_into_ssl()
 # Multibase + multicodec helpers
 # -------------------------
 
-def parse_uvarint(data: bytes) -> Tuple[int, int]:
+def _parse_uvarint(data: bytes) -> Tuple[int, int]:
     x = 0
     s = 0
     for i, b in enumerate(data):
@@ -46,7 +45,7 @@ def parse_uvarint(data: bytes) -> Tuple[int, int]:
     raise ValueError("Invalid varint")
 
 
-def decode_multibase_base58btc(z_value: str) -> bytes:
+def _decode_multibase_base58btc(z_value: str) -> bytes:
     if not z_value.startswith("z"):
         raise ValueError("Expected multibase base58btc string starting with 'z'")
     return base58.b58decode(z_value[1:])
@@ -56,8 +55,8 @@ def decode_multibase_base58btc(z_value: str) -> bytes:
 # Private key -> Ed25519 seed
 # -------------------------
 
-def extract_ed25519_seed_from_privateKey(private_key_multibase: str) -> bytes:
-    raw = decode_multibase_base58btc(private_key_multibase.strip())
+def _extract_ed25519_seed_from_privateKey(private_key_multibase: str) -> bytes:
+    raw = _decode_multibase_base58btc(private_key_multibase.strip())
 
     if len(raw) == 32:
         return raw
@@ -66,7 +65,7 @@ def extract_ed25519_seed_from_privateKey(private_key_multibase: str) -> bytes:
     if len(raw) == 34 and raw[0] == 0x00 and raw[1] == 0x20:
         return raw[2:]
 
-    code, n = parse_uvarint(raw)
+    code, n = _parse_uvarint(raw)
     if code == 0x1300 and len(raw) - n == 32:
         return raw[n:]
 
@@ -77,29 +76,29 @@ def extract_ed25519_seed_from_privateKey(private_key_multibase: str) -> bytes:
 # did:key resolution (offline)
 # -------------------------
 
-def extract_ed25519_pub_from_did_key(did_or_kid: str) -> bytes:
+def _extract_ed25519_pub_from_did_key(did_or_kid: str) -> bytes:
     base = did_or_kid.split("#", 1)[0].strip()
     if not base.startswith("did:key:"):
         raise ValueError("Not a did:key DID")
 
     mb = base[len("did:key:"):]
-    raw = decode_multibase_base58btc(mb)
+    raw = _decode_multibase_base58btc(mb)
 
     if len(raw) == 32:
         return raw
 
-    code, n = parse_uvarint(raw)
+    code, n = _parse_uvarint(raw)
     if code == 0xED and (len(raw) - n) == 32:
         return raw[n:]
 
-    raise ValueError("Invalid did:key encoding")
+    raise ValueError("Invalid did:key encoding (expected Ed25519 public key)")
 
 
 # -------------------------
 # did:web resolution (HTTPS using OS trust)
 # -------------------------
 
-def did_web_to_url(did_web: str) -> str:
+def _did_web_to_url(did_web: str) -> str:
     if not did_web.startswith("did:web:"):
         raise ValueError("Not a did:web DID")
 
@@ -114,8 +113,8 @@ def did_web_to_url(did_web: str) -> str:
     return f"https://{host}/{'/'.join(path_parts)}/did.json"
 
 
-def fetch_did_json(did_web_base: str) -> Dict[str, Any]:
-    url = did_web_to_url(did_web_base)
+def _fetch_did_json(did_web_base: str) -> Dict[str, Any]:
+    url = _did_web_to_url(did_web_base)
 
     r = requests.get(
         url,
@@ -127,11 +126,10 @@ def fetch_did_json(did_web_base: str) -> Dict[str, Any]:
     doc = r.json()
     if not isinstance(doc, dict):
         raise ValueError("did.json must be a JSON object")
-
     return doc
 
 
-def public_key_from_did_doc(*, kid: str, did_doc: Dict[str, Any]) -> bytes:
+def _public_key_from_did_doc(*, kid: str, did_doc: Dict[str, Any]) -> bytes:
     did_base = kid.split("#", 1)[0].strip()
     kid = kid.strip()
 
@@ -156,29 +154,29 @@ def public_key_from_did_doc(*, kid: str, did_doc: Dict[str, Any]) -> bytes:
         if not isinstance(pkmb, str) or not pkmb.startswith("z"):
             raise ValueError("Invalid publicKeyMultibase")
 
-        raw = decode_multibase_base58btc(pkmb)
+        raw = _decode_multibase_base58btc(pkmb)
 
         if len(raw) == 32:
             return raw
 
-        code, n = parse_uvarint(raw)
+        code, n = _parse_uvarint(raw)
         if code == 0xED and (len(raw) - n) == 32:
             return raw[n:]
 
-        raise ValueError("Not an Ed25519 key")
+        raise ValueError("publicKeyMultibase is not an Ed25519 key encoding we recognize")
 
     raise ValueError(f"kid not found in did.json: {kid}")
 
 
-def resolve_public_key_bytes_for_kid(kid: str) -> bytes:
+def _resolve_public_key_bytes_for_kid(kid: str) -> bytes:
     base = kid.split("#", 1)[0].strip()
 
     if base.startswith("did:key:"):
-        return extract_ed25519_pub_from_did_key(kid)
+        return _extract_ed25519_pub_from_did_key(kid)
 
     if base.startswith("did:web:"):
-        did_doc = fetch_did_json(base)
-        return public_key_from_did_doc(kid=kid, did_doc=did_doc)
+        did_doc = _fetch_did_json(base)
+        return _public_key_from_did_doc(kid=kid, did_doc=did_doc)
 
     raise ValueError(f"Unsupported DID method: {base}")
 
@@ -188,7 +186,7 @@ def resolve_public_key_bytes_for_kid(kid: str) -> bytes:
 # -------------------------
 
 def sign_payload(privateKey: str, kid: str, payload_obj: Dict[str, Any]) -> str:
-    seed = extract_ed25519_seed_from_privateKey(privateKey)
+    seed = _extract_ed25519_seed_from_privateKey(privateKey)
     private_key = Ed25519PrivateKey.from_private_bytes(seed)
 
     headers = {"typ": "JWT", "alg": "EdDSA", "kid": kid}
@@ -206,7 +204,7 @@ def sign_payload(privateKey: str, kid: str, payload_obj: Dict[str, Any]) -> str:
     return token
 
 
-def verify_signature_only(token: str, public_key: Ed25519PublicKey) -> None:
+def _verify_signature_only(token: str, public_key: Ed25519PublicKey) -> None:
     jwt.decode(
         token,
         key=public_key,
@@ -222,36 +220,61 @@ def verify_signature_only(token: str, public_key: Ed25519PublicKey) -> None:
     )
 
 
+def assert_signature_verifiable(token: str, kid: str) -> None:
+    pub_bytes = _resolve_public_key_bytes_for_kid(kid)
+    pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
+
+    try:
+        _verify_signature_only(token, pub_key)
+    except jwt.exceptions.InvalidSignatureError as e:
+        raise SystemExit("ERROR: Signature verification failed (token does not match DID public key).") from e
+    except jwt.PyJWTError as e:
+        raise SystemExit(f"ERROR: JWT verification error: {e}") from e
+
+    # If we reach here, verification succeeded
+    print("Signature verification: OK (matches DID public key)", file=sys.stderr)
+
+
 # -------------------------
 # CLI
 # -------------------------
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sign and verify Proof JWT")
+    ap = argparse.ArgumentParser(description="Sign and verify Proof JWT (Ed25519 / EdDSA)")
 
-    ap.add_argument("--privateKey", required=True)
-    ap.add_argument("--challengeFile", required=True)
-    ap.add_argument("--out", default=None)
-    ap.add_argument("--noVerify", action="store_true")
+    ap.add_argument("--privateKey", required=True, help="Ed25519 private seed (multibase base58btc, starts with 'z')")
+    ap.add_argument("--challengeFile", required=True, help="Path to CE-generated challenge JSON file")
+    ap.add_argument("--out", default=None, help="Write JWT to this file (optional)")
+    ap.add_argument("--noVerify", action="store_true", help="Skip verification (sign only)")
 
     args = ap.parse_args()
 
     with open(args.challengeFile, "r", encoding="utf-8") as f:
         payload_obj = json.load(f)
 
-    kid = payload_obj["did"].strip()
+    if not isinstance(payload_obj, dict):
+        raise SystemExit("ERROR: Challenge payload must be a JSON object.")
+
+    required_fields = ["did", "challenge", "aud", "iat", "exp"]
+    missing = [k for k in required_fields if k not in payload_obj]
+    if missing:
+        raise SystemExit(f"ERROR: Challenge JSON missing required field(s): {', '.join(missing)}")
+
+    did_value = payload_obj.get("did")
+    if not isinstance(did_value, str) or not did_value.strip():
+        raise SystemExit('ERROR: Challenge JSON must include a non-empty string field "did".')
+
+    kid = did_value.strip()
 
     token = sign_payload(args.privateKey, kid, payload_obj)
 
     if not args.noVerify:
-        pub_bytes = resolve_public_key_bytes_for_kid(kid)
-        pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
-        verify_signature_only(token, pub_key)
-        print("Signature verification: OK", file=sys.stderr)
+        assert_signature_verifiable(token, kid)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(token)
+        print(f"Wrote Proof JWT to: {args.out}", file=sys.stderr)
     else:
         print(token)
 
