@@ -43,25 +43,37 @@ The challenge JSON file must be a JSON object and include:
 -   exp
 
 Example:
-
-{ "did": "did:key:z6Mkm...#z6Mkm...", "challenge": "b2f0c5...", "aud":
-"https://example.org", "iat": 1739832000, "exp": 1739835600 }
-
+ ```` 
+{ 
+"did": "did:key:z6Mkm...#z6Mkm...",
+"challenge": "b2f0c5...",
+"aud": "https://example.org",
+"iat": 1739832000,
+"exp": 1739835600 
+}
+ ```` 
 
 ## Usage
 
 ### Generate 
-
+```` 
     python Ed25519_proof_jwt_generator.py       --privateKey z...       --challengeFile .\challenge.json
-
+```` 
 Prints the signed JWT to stdout. Prints "Signature verification: OK" if
 verification succeeds.
 
 
 ### Write output JWT to a file
-
+```` 
     python Ed25519_proof_jwt_generator.py       --privateKey z...       --challengeFile .\challenge.json       --out .\proof.jwt
+```` 
+### Expected Output
+- If signing and verification succeed:
 
+ ```` 
+ Signature verification: OK (matches DID public key)
+eyJhbGciOiJFZERTQSIsImtpZCI6ImRp...
+ ````   
 
 ## How verification works
 
@@ -93,15 +105,22 @@ verification succeeds.
 
 ### Signature verification failed
 
-This usually means:
+```` 
+ERROR: Signature verification failed (token does not match DID public key)
+```` 
+- This usually means:
 
--   The kid resolved to a different public key than the private key used
-    for signing, OR
--   You are testing with a did for which you don't have the
-    corresponding private key, OR
--   The kid does not match any verificationMethod.id in the DID
-    document.
+  - The private key used to sign does not correspond to the public key in the DID
+  - The kid fragment does not match a verificationMethod
+  - The wrong DID was used in the challenge
+  - The DID document contains a different key
 
-
-
-
+### Signature verification failed
+```` 
+ERROR: Unable to fetch DID document
+```` 
+- Possible causes:
+  - Incorrect did:web format
+  - DID document not hosted
+  - HTTPS certificate issue
+  - Network issue
